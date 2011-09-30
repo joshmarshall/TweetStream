@@ -24,3 +24,5 @@ The constructor takes two optional arguments, `ioloop` and `clean`.
 The `ioloop` argument just lets you specify a specific loop to run on,
 and `clean` is just a boolean (False by default) that will strip out
 basic data from the twitter message payload.
+
+TODO: Implement OAuth header instead of Basic Auth.
