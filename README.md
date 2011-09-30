@@ -1,5 +1,5 @@
 The TweetStream class is just a simple HTTP client for handling the
-twitter firehose.
+twitter streaming API.
 
 Usage is pretty simple:
 
