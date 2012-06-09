@@ -43,13 +43,25 @@ TWITTER_STREAM_SCHEME = "https"
 class TweetStream(object):
     """ Twitter stream connection """
 
-    def __init__(self, ioloop=None, clean=False):
+    def __init__(self, ioloop=None, clean=False, configuration=None):
         """ Just set up the cache list and get first set """
         # prepopulating cache
+        if not configuration:
+            configuration = {}
         self.ioloop = ioloop or IOLoop.instance()
         self.callback = None
         self.error_callback = None
         self._clean_message = clean
+        self._twitter_app_user = configuration.get("twitter_app_username", 
+            TWITTER_APP_USER)
+        self._twitter_app_password = configuration.get("twitter_app_password",
+            TWITTER_APP_PASSWORD)
+        self._twitter_stream_host = configuration.get("twitter_stream_host",
+            TWITTER_STREAM_HOST)
+        self._twitter_stream_port = int(configuration.get(
+            "twitter_stream_port", TWITTER_STREAM_PORT))
+        self._twitter_stream_scheme = configuration.get(
+            "twitter_stream_scheme", TWITTER_STREAM_SCHEME)
 
     def fetch(self, path, method="GET", callback=None):
         """ Opens the request """
@@ -77,21 +89,21 @@ class TweetStream(object):
 
     def open_twitter_stream(self):
         """ Creates the client and watches stream """
-        address_info = socket.getaddrinfo(TWITTER_STREAM_HOST,
-            TWITTER_STREAM_PORT, socket.AF_INET, socket.SOCK_STREAM,
+        address_info = socket.getaddrinfo(self._twitter_stream_host,
+            self._twitter_stream_port, socket.AF_INET, socket.SOCK_STREAM,
             0, 0)
         af, socktype, proto = address_info[0][:3]
         socket_address = address_info[0][-1]
         sock = socket.socket(af, socktype, proto)
         stream_class = IOStream
-        if TWITTER_STREAM_SCHEME == "https":
+        if self._twitter_stream_scheme == "https":
             stream_class = SSLIOStream
         self.twitter_stream = stream_class(sock, io_loop=self.ioloop)
         self.twitter_stream.connect(socket_address, self.on_connect)
 
     def on_connect(self):
-        base64string = base64.encodestring("%s:%s" % (TWITTER_APP_USER,
-            TWITTER_APP_PASSWORD))[:-1]
+        base64string = base64.encodestring("%s:%s" % (self._twitter_app_user,
+            self._twitter_app_password))[:-1]
         headers = {"Authorization": "Basic %s" % base64string,
                    "Host": "stream.twitter.com"}
         request = ["GET %s HTTP/1.1" % self.full_path]

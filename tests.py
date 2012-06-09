@@ -20,7 +20,7 @@ class TestTweetStream(AsyncTestCase):
         tweetstream.TWITTER_APP_PASSWORD = self.original_app_password
 
     def test_twitter_stream(self):
-        """ Test that the twitter stream is started """
+        """ Test that the twitter stream is started with module defaults """
         result = {}
         def error_callback(error):
             result["error"] = error
@@ -30,6 +30,26 @@ class TestTweetStream(AsyncTestCase):
         stream.fetch("foobar?whats=up")
         self.wait()
         self.assertTrue("error" in result)
+
+    def test_twitter_stream_with_configuration(self):
+        """Test that the twitter stream supports instance configuration."""
+        configuration = {
+            "twitter_app_username": "newusername",
+            "twitter_app_password": "newpassword",
+            "twitter_stream_host": "whatever.com",
+            "twitter_stream_port": 556,
+            "twitter_stream_scheme": "http"
+        }
+        stream = tweetstream.TweetStream(ioloop=self.io_loop,
+            configuration=configuration)
+        # this is evil, but until module stuff is removed and
+        # proper configuration is refactored it will have to do.
+        self.assertEqual("newusername", stream._twitter_app_user)
+        self.assertEqual("newpassword", stream._twitter_app_password)
+        self.assertEqual("whatever.com", stream._twitter_stream_host)
+        self.assertEqual(556, stream._twitter_stream_port)
+        self.assertEqual("http", stream._twitter_stream_scheme)
+
 
 class TestActualTwitterCalls(AsyncTestCase):
     """ Testing actual calls, assuming settings are loaded. """
