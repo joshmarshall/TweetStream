@@ -24,5 +24,5 @@ setup(
     url = "http://github.com/joshmarshall/tweetstream",
     license = "http://www.apache.org/licenses/LICENSE-2.0",
     py_modules=['tweetstream',],
-    install_requires=['tornado',]
+    install_requires=['tornado', "oauth2"]
 )
