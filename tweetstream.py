@@ -5,14 +5,19 @@ twitter streaming API.
 Usage is pretty simple:
 
     import tweetstream
-    tweetstream.TWITTER_APP_USER = "username"
-    tweetstream.TWITTER_APP_PASSWORD = "password"
 
     def callback(message):
         # this will be called every message
         print message
 
-    stream = tweetstream.TweetStream()
+    configuration = {
+        "twitter_consumer_secret": "ABCDEF1234567890",
+        "twitter_consumer_key": "0987654321ABCDEF",
+        "twitter_access_token_secret": "1234567890ABCDEF",
+        "twitter_access_token": "FEDCBA09123456789"
+    }
+
+    stream = tweetstream.TweetStream(configuration)
     stream.fetch("/1/statuses/filter.json?track=foobar", callback=callback)
 
     # if you aren't on a running ioloop...
@@ -31,49 +36,68 @@ from tornado.ioloop import IOLoop
 import json
 import socket
 import time
-import base64
+import oauth2
 import urlparse
 
-TWITTER_APP_USER = "SET_IN_SETTINGS"
-TWITTER_APP_PASSWORD = "SET_IN_SETTINGS"
-TWITTER_STREAM_HOST = "stream.twitter.com"
-TWITTER_STREAM_PORT = 443
-TWITTER_STREAM_SCHEME = "https"
+class MissingConfiguration(Exception):
+    """Raised when a configuration value is not found."""
+    pass
 
 class TweetStream(object):
     """ Twitter stream connection """
 
-    def __init__(self, ioloop=None, clean=False, configuration=None):
+    def __init__(self, configuration, ioloop=None, clean=False):
         """ Just set up the cache list and get first set """
         # prepopulating cache
-        if not configuration:
-            configuration = {}
-        self.ioloop = ioloop or IOLoop.instance()
-        self.callback = None
-        self.error_callback = None
+        self._ioloop = ioloop or IOLoop.instance()
+        self._callback = None
+        self._error_callback = None
         self._clean_message = clean
-        self._twitter_app_user = configuration.get("twitter_app_username", 
-            TWITTER_APP_USER)
-        self._twitter_app_password = configuration.get("twitter_app_password",
-            TWITTER_APP_PASSWORD)
-        self._twitter_stream_host = configuration.get("twitter_stream_host",
-            TWITTER_STREAM_HOST)
-        self._twitter_stream_port = int(configuration.get(
-            "twitter_stream_port", TWITTER_STREAM_PORT))
-        self._twitter_stream_scheme = configuration.get(
-            "twitter_stream_scheme", TWITTER_STREAM_SCHEME)
+        self._configuration = configuration
+        consumer_key = self._get_configuration_key("twitter_consumer_key")
+        consumer_secret = self._get_configuration_key(
+            "twitter_consumer_secret")
+        self._consumer = oauth2.Consumer(
+            key=consumer_key, secret=consumer_secret)
+        access_token = self._get_configuration_key("twitter_access_token")
+        access_secret = self._get_configuration_key(
+            "twitter_access_token_secret")
+        self._token = oauth2.Token(key=access_token, secret=access_secret)
+        self._twitter_stream_host = self._get_configuration_key(
+            "twitter_stream_host", "stream.twitter.com")
+        self._twitter_stream_scheme = self._get_configuration_key(
+            "twitter_stream_scheme", "https")
+        self._twitter_stream_port = self._get_configuration_key(
+            "twitter_stream_port", 443)
+
+    def _get_configuration_key(self, key, default=None):
+        """
+        Retrieve a configuration option, raising an exception if no
+        default is provided.
+
+        """
+        configured_value = self._configuration.get(key, default)
+        if configured_value is None:
+            raise MissingConfiguration("Missing configuration item: %s" % key)
+        return configured_value
+
+    def set_error_callback(self, error_callback):
+        """Pretty self explanatory."""
+        self._error_callback = error_callback
 
     def fetch(self, path, method="GET", callback=None):
         """ Opens the request """
         parts = urlparse.urlparse(path)
-        self.method = method
-        self.callback = callback
-        self.path = parts.path
-        self.full_path = self.path
+        self._method = method
+        self._callback = callback
+        self._path = parts.path
+        self._full_path = self._path
+        self._parameters = {}
         if parts.query:
-            self.full_path += "?%s" % parts.query
+            self._full_path += "?%s" % parts.query
+
         # throwing away empty or extra query arguments
-        self.query_args = dict([
+        self._parameters = dict([
             (key, value[0]) for key, value in
             urlparse.parse_qs(parts.query).iteritems()
             if value
@@ -82,8 +106,8 @@ class TweetStream(object):
 
     def on_error(self, error):
         """ Just a wrapper for the error callback """
-        if self.error_callback:
-            return self.error_callback(error)
+        if self._error_callback:
+            return self._error_callback(error)
         else:
             raise error
 
@@ -98,42 +122,71 @@ class TweetStream(object):
         stream_class = IOStream
         if self._twitter_stream_scheme == "https":
             stream_class = SSLIOStream
-        self.twitter_stream = stream_class(sock, io_loop=self.ioloop)
-        self.twitter_stream.connect(socket_address, self.on_connect)
+        self._twitter_stream = stream_class(sock, io_loop=self._ioloop)
+        self._twitter_stream.connect(socket_address, self.on_connect)
 
     def on_connect(self):
-        base64string = base64.encodestring("%s:%s" % (self._twitter_app_user,
-            self._twitter_app_password))[:-1]
-        headers = {"Authorization": "Basic %s" % base64string,
-                   "Host": "stream.twitter.com"}
-        request = ["GET %s HTTP/1.1" % self.full_path]
+        parameters = {
+            "oauth_token": self._token.key,
+            "oauth_consumer_key": self._consumer.key,
+            "oauth_version": "1.0",
+            "oauth_nonce": oauth2.generate_nonce(),
+            "oauth_timestamp": int(time.time())
+        }
+        parameters.update(self._parameters)
+        request = oauth2.Request(
+            method="GET",
+            url="%s://%s%s" % (
+                self._twitter_stream_scheme,
+                self._twitter_stream_host,
+                self._path),
+            parameters=parameters)
+        signature_method = oauth2.SignatureMethod_HMAC_SHA1()
+        request.sign_request(signature_method, self._consumer, self._token)
+        headers = request.to_header()
+        headers["Host"] = self._twitter_stream_host
+        headers["User-Agent"] = "TweetStream"
+        headers["Accept"] = "*/*"
+        request = ["GET %s HTTP/1.1" % self._full_path]
         for key, value in headers.iteritems():
             request.append("%s: %s" % (key, value))
         request = "\r\n".join(request) + "\r\n\r\n"
-        self.twitter_stream.write(str(request))
-        self.twitter_stream.read_until("\r\n\r\n", self.on_headers)
+        self._twitter_stream.write(str(request))
+        self._twitter_stream.read_until("\r\n\r\n", self.on_headers)
 
     def on_headers(self, response):
         """ Starts monitoring for results. """
         status_line = response.splitlines()[0]
         response_code = status_line.replace("HTTP/1.1", "")
         response_code = int(response_code.split()[0].strip())
-        exception = Exception("Could not connect to twitter: %s\n%s" %
-            (status_line, response))
         if response_code != 200:
-            return self.on_error(exception)
+            exception_string = "Could not connect: %s\n%s" % (
+                status_line, response)
+            headers = dict([
+                (l.split(":")[0].lower(), ":".join(l.split(":")[1:]))
+                for l in response.splitlines()[1:]
+            ])
+            content_length = int(headers.get("content-length") or 0)
+            if not content_length:
+                return self.on_error(Exception(exception_string))
+            def get_error_body(content):
+                full_string = "%s\n%s" % (exception_string, content)
+                self.on_error(Exception(full_string))
+            return self._twitter_stream.read_bytes(
+                content_length, get_error_body)
+            
         self.wait_for_message()
 
     def wait_for_message(self):
         """ Throw a read event on the stack. """
-        self.twitter_stream.read_until("\r\n", self.on_result)
+        self._twitter_stream.read_until("\r\n", self.on_result)
 
     def on_result(self, response):
         """ Gets length of next message and reads it """
         if (response.strip() == ""):
             return self.wait_for_message()
         length = int(response.strip(), 16)
-        self.twitter_stream.read_bytes(length, self.parse_json)
+        self._twitter_stream.read_bytes(length, self.parse_json)
 
     def parse_json(self, response):
         """ Checks JSON message """
@@ -169,6 +222,6 @@ class TweetStream(object):
                 "username": username,
                 "time": int(time.time())
             }
-        if self.callback:
-            self.callback(response)
+        if self._callback:
+            self._callback(response)
         self.wait_for_message()

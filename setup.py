@@ -17,7 +17,7 @@ from distutils.core import setup
 
 setup(
     name='tweetstream',
-    version='0.1.2',
+    version='0.2.0',
     description='Simple Twitter Streaming client for Tornado ',
     author='Josh Marshall',
     author_email='catchjosh@gmail.com',
