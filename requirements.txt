@@ -1,5 +1,5 @@
 argparse==1.2.1
-httplib2==0.7.4
+httplib2==0.18.0
 nose==1.1.2
 oauth2==1.5.211
 tornado==2.3
